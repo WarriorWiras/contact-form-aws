@@ -2,7 +2,7 @@
 
 Terraform provisions the AWS infrastructure. Ansible builds the images on a local workstation, pushes them to ECR, installs the EKS controllers, bootstraps PostgreSQL, and deploys the Flask application. [Architecture](docs/architecture.md) · [Security checks](docs/security-controls.md) · [Demo checklist](docs/demo-checklist.md).
 
-**Current status:** The Flask application passed four unit tests and a local Docker/PostgreSQL insert. The Terraform and Ansible code is prepared but has **not yet been applied to AWS**. Live AWS findings and final cost remain unknown until deployment. Review the plan and credit balance before any apply.
+**Demo status (25 September 2026):** Local tests passed, Terraform provisioned the AWS environment, and Ansible deployed two ready Flask Pods. An ALB readiness request returned HTTP 200 and a fictional submission was retrieved from RDS using the read-only verifier Job. Security observations and outstanding exceptions are recorded in [the security controls document](docs/security-controls.md). Confirm the remaining AWS credit before leaving the stack running; this deployment is still consuming credits.
 
 ## Prerequisites
 
@@ -70,12 +70,14 @@ Ansible prints the ALB HTTP address when the Ingress receives a hostname. Wait a
 
 ```bash
 ./scripts/verify.sh
-./scripts/security-audit.sh > evidence/security-audit-local.txt
+mkdir -p evidence/private
+./scripts/security-audit.sh > evidence/private/security-audit.txt
+chmod 600 evidence/private/security-audit.txt
 ansible-playbook ansible/deploy.yml  # rerun to check idempotence
 terraform -chdir=terraform plan -var-file=envs/demo/demo.tfvars
 ```
 
-The security audit is mixed text/JSON; redact ARNs, addresses and user information before sharing it. Record each observed result in `docs/security-controls.md`. A new Free Plan account may not support Security Hub CSPM; the assignment also accepts relevant CIS-aligned controls. Do not claim live findings until AWS checks have run. The public listener uses HTTP without a personal domain/ACM certificate: this is an explicit temporary demo exception. Do not submit real contact information.
+The security audit is mixed text/JSON; redact ARNs, addresses and user information before sharing it. The initial 25 September audit used the wrong EKS API response field and returned `null` for endpoint settings; the script is corrected and an independent `describe-cluster` query confirmed private access and a public operator `/32`. See `docs/security-controls.md` for confirmed checks and exceptions. The read-only Security Hub API returned `SubscriptionRequiredException` on this Free Plan account; the repository reports manual AWS control comparisons, not AWS-generated findings. Do not activate advanced account features or upgrade just for this demo. The public listener uses HTTP without a personal domain/ACM certificate: this is an explicit temporary demo exception. Do not submit real contact information.
 
 ## Pause and teardown
 
