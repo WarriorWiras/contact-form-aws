@@ -34,10 +34,10 @@ Terraform sets RDS managed master credentials: RDS generates the password and ke
 
 ## Resource ownership and order
 
-1. **Terraform:** foundational network, EKS/node group/add-ons needed for Pod Identity, RDS, IAM/Pod Identity associations, ECR, logging and AWS security standards. Also produce non-secret outputs (cluster name, ECR URL, RDS endpoint and secret ARNs).
+1. **Terraform:** foundational network, EKS/node group/add-ons needed for Pod Identity, RDS, IAM/Pod Identity associations, ECR, logging and applicable AWS security controls. Also produce non-secret outputs (cluster name, ECR URL, RDS endpoint and secret ARNs).
 2. **Ansible:** build/push image from the workstation, install/upgrade the AWS Load Balancer Controller and CSI/AWS provider, configure namespace/service accounts, bootstrap restricted database role, apply deployment/service/Ingress, and wait for rollout/ALB address.
 3. **AWS Load Balancer Controller:** creates and manages ALB/listeners/target groups/security group from Ingress using Terraform-supplied tagged subnets and tightly scoped IAM permissions. Teardown deletes Ingress first so its ALB is cleaned up before destroying the VPC.
-4. **Security Hub CSPM:** enable AWS Foundational Security Best Practices; collect actual control statuses and record remediation or an explanation in `docs/security-controls.md`.
+4. **Security checks:** record actual results for relevant CIS-aligned settings, including encryption, public access, logging, IAM and security groups. Enable AWS Foundational Security Best Practices in Security Hub only if the account plan supports it; do not claim a Security Hub finding when it is unavailable.
 
 ## Demo verification
 

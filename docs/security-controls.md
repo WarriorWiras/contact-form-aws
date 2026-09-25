@@ -4,7 +4,8 @@ Status: **planned; no AWS environment deployed or findings observed yet**.
 
 | Control / requirement | Planned implementation | Actual result and evidence | Remediation / exception |
 | --- | --- | --- | --- |
-| Security Hub CSPM AWS Foundational Security Best Practices | Terraform enables standard in demo region | Pending | Pending |
+| CIS-aligned checks for network, IAM, encryption, logging | Implement in Terraform; collect actual configuration and findings after deployment | Pending | Pending |
+| Security Hub CSPM AWS Foundational Security Best Practices | Conditional: requires access to Security Hub in chosen account plan | Pending or unavailable on Free account plan | Document exception if unavailable |
 | Restricted network exposure | Public ALB only; private nodes and RDS; allowlisted EKS API | Pending | Pending |
 | Secrets and least privilege | RDS-managed master, separate app role and secret, Pod Identity | Pending | Pending |
 | Encryption and logging | RDS storage encryption, EKS control-plane logging, encrypted AWS secrets | Pending | Pending |
