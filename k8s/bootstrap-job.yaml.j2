@@ -1,0 +1,46 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-bootstrap-{{ image_tag[:10] }}
+  namespace: contact-form
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      serviceAccountName: db-bootstrap
+      restartPolicy: Never
+      securityContext:
+        runAsUser: 10001
+        runAsGroup: 10001
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: bootstrap
+          image: {{ ecr_repository_url }}:bootstrap-{{ image_tag }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: AWS_REGION
+              value: {{ aws_region | quote }}
+            - name: DB_HOST
+              value: {{ db_host | quote }}
+            - name: DB_NAME
+              value: {{ db_name | quote }}
+            - name: MASTER_SECRET_ARN
+              value: {{ db_master_secret_arn | quote }}
+            - name: APP_SECRET_ARN
+              value: {{ app_secret_arn | quote }}
+            - name: VERIFIER_SECRET_ARN
+              value: {{ verifier_secret_arn | quote }}
+          resources:
+            requests:
+              cpu: 50m
+              memory: 96Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

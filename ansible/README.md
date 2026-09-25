@@ -1,3 +1,3 @@
-# Ansible implementation (next phase)
+# Ansible
 
-Add an idempotent local-workstation playbook and roles for image publish, controllers, database bootstrap and Kubernetes workloads.
+Install `kubernetes.core` from `ansible/requirements.yml` and inject `kubernetes`, `PyYAML`, `jsonpatch` into the Ansible pipx venv. Run `AWS_PROFILE=contact-demo ansible-playbook ansible/deploy.yml` from WSL after Terraform applies and nodes join. Docker builds app/bootstrap images tagged by tracked source contents, pushes absent images to ECR, then Helm installs ALB and Secrets Store controllers. The playbook applies the PostgreSQL initialization Job and Flask deployment/service/Ingress. Re-running should leave already published images and completed Job in place, and reconcile desired resources. The bootstrap Job never prints secret values. Terraform outputs contain ARNs, not credentials.

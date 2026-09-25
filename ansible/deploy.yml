@@ -1,0 +1,272 @@
+---
+- name: Build images and deploy the contact form from the local workstation
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    project_root: "{{ playbook_dir | dirname }}"
+    terraform_dir: "{{ project_root }}/terraform"
+    aws_profile: contact-demo
+    kubeconfig_file: "{{ lookup('env', 'HOME') }}/.kube/config"
+
+  tasks:
+    - name: Identify the current AWS principal
+      ansible.builtin.command:
+        argv:
+          - aws
+          - sts
+          - get-caller-identity
+          - --query
+          - Arn
+          - --output
+          - text
+      register: principal
+      changed_when: false
+
+    - name: Refuse to deploy as the account root user
+      ansible.builtin.assert:
+        that:
+          - "':root' not in principal.stdout"
+        fail_msg: "Use the contact-demo IAM profile, never the root profile."
+
+    - name: Read infrastructure outputs without reading secret values
+      ansible.builtin.command:
+        argv: [terraform, "output", "-json"]
+        chdir: "{{ terraform_dir }}"
+      register: terraform_output
+      changed_when: false
+
+    - name: Extract non-secret deployment settings
+      ansible.builtin.set_fact:
+        tf: "{{ terraform_output.stdout | from_json }}"
+
+    - name: Prepare addresses and immutable image tag
+      ansible.builtin.set_fact:
+        cluster_name: "{{ tf.cluster_name.value }}"
+        aws_region: "{{ tf.region.value }}"
+        vpc_id: "{{ tf.vpc_id.value }}"
+        db_host: "{{ tf.db_host.value }}"
+        db_name: "{{ tf.db_name.value }}"
+        db_master_secret_arn: "{{ tf.db_master_secret_arn.value }}"
+        app_secret_arn: "{{ tf.app_secret_arn.value }}"
+        verifier_secret_arn: "{{ tf.verifier_secret_arn.value }}"
+        ecr_repository_url: "{{ tf.ecr_repository_url.value }}"
+        alb_security_group_id: "{{ tf.alb_security_group_id.value }}"
+        public_subnet_ids: "{{ tf.public_subnet_ids.value }}"
+
+    - name: Fingerprint Git-tracked application source for image tagging
+      ansible.builtin.shell: |
+        set -o pipefail
+        git ls-files -z app | xargs -0 sha256sum | sha256sum | cut -c 1-16
+      args:
+        chdir: "{{ project_root }}"
+        executable: /bin/bash
+      register: source_hash
+      changed_when: false
+
+    - name: Set the image tag
+      ansible.builtin.set_fact:
+        image_tag: "{{ source_hash.stdout }}"
+
+    - name: Create or update kubeconfig for the private workloads
+      ansible.builtin.command:
+        argv:
+          - aws
+          - eks
+          - update-kubeconfig
+          - --name
+          - "{{ cluster_name }}"
+          - --region
+          - "{{ aws_region }}"
+          - --alias
+          - "{{ cluster_name }}"
+      changed_when: false
+
+    - name: Require running workers before installing cluster workloads
+      ansible.builtin.command:
+        argv: [kubectl, get, nodes, "-o", name]
+      register: worker_nodes
+      changed_when: false
+
+    - name: Stop if managed node group is scaled to zero
+      ansible.builtin.assert:
+        that:
+          - worker_nodes.stdout_lines | length > 0
+        fail_msg: "Raise node_count to 2 with Terraform before running Ansible."
+
+    - name: Check whether application image is already in ECR
+      ansible.builtin.command:
+        argv:
+          - aws
+          - ecr
+          - describe-images
+          - --repository-name
+          - "{{ cluster_name }}"
+          - --image-ids
+          - "imageTag=app-{{ image_tag }}"
+          - --region
+          - "{{ aws_region }}"
+      register: app_image
+      failed_when: false
+      changed_when: false
+
+    - name: Check whether bootstrap image is already in ECR
+      ansible.builtin.command:
+        argv:
+          - aws
+          - ecr
+          - describe-images
+          - --repository-name
+          - "{{ cluster_name }}"
+          - --image-ids
+          - "imageTag=bootstrap-{{ image_tag }}"
+          - --region
+          - "{{ aws_region }}"
+      register: bootstrap_image
+      failed_when: false
+      changed_when: false
+
+    - name: Authenticate Docker to the private ECR registry if pushing
+      ansible.builtin.shell: >-
+        aws ecr get-login-password --region {{ aws_region | quote }}
+        | docker login --username AWS --password-stdin
+        {{ ecr_repository_url.split('/')[0] | quote }}
+      args:
+        executable: /bin/bash
+      when: app_image.rc != 0 or bootstrap_image.rc != 0
+      changed_when: false
+      no_log: true
+
+    - name: Build Flask image when its tag is absent
+      ansible.builtin.command:
+        argv: [docker, build, "-t", "{{ ecr_repository_url }}:app-{{ image_tag }}", "{{ project_root }}/app"]
+      when: app_image.rc != 0
+
+    - name: Push Flask image when its tag is absent
+      ansible.builtin.command:
+        argv: [docker, push, "{{ ecr_repository_url }}:app-{{ image_tag }}"]
+      when: app_image.rc != 0
+
+    - name: Build database bootstrap image when its tag is absent
+      ansible.builtin.command:
+        argv:
+          - docker
+          - build
+          - "-f"
+          - "{{ project_root }}/app/bootstrap/Dockerfile"
+          - "-t"
+          - "{{ ecr_repository_url }}:bootstrap-{{ image_tag }}"
+          - "{{ project_root }}/app"
+      when: bootstrap_image.rc != 0
+
+    - name: Push database bootstrap image when its tag is absent
+      ansible.builtin.command:
+        argv: [docker, push, "{{ ecr_repository_url }}:bootstrap-{{ image_tag }}"]
+      when: bootstrap_image.rc != 0
+
+    - name: Register AWS EKS charts
+      kubernetes.core.helm_repository:
+        name: eks
+        repo_url: https://aws.github.io/eks-charts
+
+    - name: Register Secrets Manager provider charts
+      kubernetes.core.helm_repository:
+        name: aws-secrets-manager
+        repo_url: https://aws.github.io/secrets-store-csi-driver-provider-aws
+
+    - name: Install AWS Load Balancer Controller
+      kubernetes.core.helm:
+        release_name: aws-load-balancer-controller
+        chart_ref: eks/aws-load-balancer-controller
+        chart_version: 1.14.0
+        release_namespace: kube-system
+        wait: true
+        wait_timeout: 10m0s
+        values:
+          clusterName: "{{ cluster_name }}"
+          region: "{{ aws_region }}"
+          vpcId: "{{ vpc_id }}"
+          replicaCount: 1
+          serviceAccount:
+            create: true
+            name: aws-load-balancer-controller
+
+    - name: Install Secrets Store CSI driver and AWS provider
+      kubernetes.core.helm:
+        release_name: secrets-provider-aws
+        chart_ref: aws-secrets-manager/secrets-store-csi-driver-provider-aws
+        chart_version: 3.1.2
+        release_namespace: kube-system
+        wait: true
+        wait_timeout: 10m0s
+
+    - name: Apply restricted application namespace
+      kubernetes.core.k8s:
+        state: present
+        src: "{{ project_root }}/k8s/namespace.yaml"
+
+    - name: Apply workload service accounts
+      kubernetes.core.k8s:
+        state: present
+        src: "{{ project_root }}/k8s/service-accounts.yaml"
+
+    - name: Bootstrap PostgreSQL schema and application secret
+      kubernetes.core.k8s:
+        state: present
+        apply: true
+        definition: "{{ lookup('template', project_root ~ '/k8s/bootstrap-job.yaml.j2') | from_yaml }}"
+
+    - name: Wait for PostgreSQL bootstrap Job
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - wait
+          - "--for=condition=complete"
+          - "job/db-bootstrap-{{ image_tag[:10] }}"
+          - --namespace
+          - contact-form
+          - --timeout=600s
+      changed_when: false
+
+    - name: Apply Flask deployment, ClusterIP service and ALB Ingress
+      kubernetes.core.k8s:
+        state: present
+        apply: true
+        definition: "{{ lookup('template', project_root ~ '/k8s/application.yaml.j2') | from_yaml_all | list }}"
+
+    - name: Wait for healthy Flask Pods
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - rollout
+          - status
+          - deployment/contact-form
+          - --namespace
+          - contact-form
+          - --timeout=600s
+      changed_when: false
+
+    - name: Read provisioned ALB hostname
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - get
+          - ingress
+          - contact-form
+          - --namespace
+          - contact-form
+          - "-o"
+          - "jsonpath={.status.loadBalancer.ingress[0].hostname}"
+      register: alb_hostname
+      retries: 30
+      delay: 10
+      until: alb_hostname.rc == 0 and alb_hostname.stdout | length > 0
+      changed_when: false
+
+    - name: Show demo address
+      ansible.builtin.debug:
+        msg: "Contact form demo URL: http://{{ alb_hostname.stdout }}"
+
+  environment:
+    AWS_PROFILE: "{{ aws_profile }}"
+    AWS_DEFAULT_REGION: us-east-1

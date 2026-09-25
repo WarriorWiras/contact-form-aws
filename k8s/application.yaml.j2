@@ -1,0 +1,134 @@
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: contact-db
+  namespace: contact-form
+spec:
+  provider: aws
+  parameters:
+    region: {{ aws_region | quote }}
+    usePodIdentity: "true"
+    objects: |
+      - objectName: "{{ app_secret_arn }}"
+        objectType: "secretsmanager"
+        objectAlias: "db.json"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: contact-form
+  namespace: contact-form
+spec:
+  replicas: 2
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels:
+      app: contact-form
+  template:
+    metadata:
+      labels:
+        app: contact-form
+    spec:
+      serviceAccountName: contact-form
+      securityContext:
+        runAsUser: 10001
+        runAsGroup: 10001
+        runAsNonRoot: true
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: flask
+          image: {{ ecr_repository_url }}:app-{{ image_tag }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: DB_HOST
+              value: {{ db_host | quote }}
+            - name: DB_NAME
+              value: {{ db_name | quote }}
+            - name: DB_SECRET_FILE
+              value: /mnt/secrets/db.json
+          volumeMounts:
+            - name: db-secret
+              mountPath: /mnt/secrets
+              readOnly: true
+            - name: gunicorn-tmp
+              mountPath: /tmp
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 4
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 75m
+              memory: 96Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: db-secret
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: contact-db
+        - name: gunicorn-tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: contact-form
+  namespace: contact-form
+spec:
+  type: ClusterIP
+  selector:
+    app: contact-form
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: contact-form
+  namespace: contact-form
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/subnets: "{{ public_subnet_ids | join(',') }}"
+    alb.ingress.kubernetes.io/security-groups: "{{ alb_security_group_id }}"
+    alb.ingress.kubernetes.io/manage-backend-security-group-rules: "false"
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    alb.ingress.kubernetes.io/healthcheck-path: /health/ready
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: contact-form
+                port:
+                  name: http

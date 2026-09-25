@@ -1,3 +1,3 @@
-# Verification helpers (next phase)
+# Demo helpers
 
-Add commands/scripts for preflight checks, safe database verification, Security Hub evidence collection and ordered teardown.
+`./scripts/verify.sh` creates and deletes a temporary read-only PostgreSQL verification Job in EKS and prints five recent rows; submit fictional contact data only. `./scripts/security-audit.sh` runs read-only AWS and Kubernetes configuration queries to gather CIS-aligned evidence, including RDS encryption, EKS logs, endpoint CIDRs, secret metadata, security groups, MFA count and RBAC. It never fetches secret values. Review/redact command output before sharing. Both require the Terraform state, current kubeconfig access and the `contact-demo` profile. Teardown commands live in the root README.
