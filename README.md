@@ -6,7 +6,7 @@ Terraform provisions the AWS infrastructure. Ansible builds the images on a loca
 
 ## Prerequisites
 
-Use Ubuntu WSL2 with AWS CLI, Terraform >=1.9, Docker with WSL integration, kubectl, Helm, Python 3 and Ansible Core. The `contact-demo` AWS CLI profile must resolve to an IAM user with permissions to create the listed AWS services, never the account root. This demo uses `us-east-1`. Two `t3.medium` nodes and one `db.t4g.micro` must be available under the account's regional quotas.
+Use Ubuntu WSL2 with AWS CLI, Terraform >=1.9, Docker with WSL integration, kubectl, Helm, Python 3 and Ansible Core. The `contact-demo` AWS CLI profile must resolve to an IAM user with permissions to create the listed AWS services, never the account root. This demo uses `us-east-1`. Two Free Plan eligible `m7i-flex.large` nodes (4 vCPUs total) and one `db.t4g.micro` must be available under the account's regional quotas. Check your account's allowed types with `aws ec2 describe-instance-types --filters Name=free-tier-eligible,Values=true --query 'InstanceTypes[].InstanceType' --output text` before applying.
 
 For Ansible's Kubernetes modules, install the collection and Python dependencies in the Ansible pipx environment:
 
@@ -92,6 +92,10 @@ terraform -chdir=terraform state list
 ```
 
 After destroy, check the EKS cluster, RDS instance, NAT gateway, ALBs, ECR repo and Secrets Manager secrets in AWS. If the ALB remains, let its controller finish deleting before Terraform destroys VPC/network resources. RDS final snapshots are disabled for this disposable demo and both app secret recovery windows are zero: destroying the stack deletes the database and secrets. Save any redacted demo evidence before teardown.
+
+## Failed node group recovery
+
+The first demo apply on 25 September 2026 created the network, EKS cluster and RDS, but EKS rejected `t3.medium` because the Free Plan only permits Free Tier eligible EC2 types. The Terraform default now selects `m7i-flex.large`, which AWS identified as eligible in this account, with 8 GiB of RAM and 2 vCPUs per node. When recovering an existing failed node group, keep the local Terraform state and the same `operator_cidr` in the ignored tfvars file; run a fresh `terraform plan -var-file=envs/demo/demo.tfvars -out=repair.tfplan` and review the replacement actions. A failed EKS node group can remain in `CREATE_FAILED`; Terraform should replace the existing group if it is still present in state. Never reuse the original saved `demo.tfplan`, which still contains the disallowed instance type. If the replacement fails, inspect EKS health and Terraform state before any further apply.
 
 ## Layout
 

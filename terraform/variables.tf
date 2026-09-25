@@ -43,7 +43,7 @@ variable "node_count" {
 
 variable "node_instance_type" {
   type    = string
-  default = "t3.medium"
+  default = "m7i-flex.large"
 }
 
 variable "db_instance_class" {
