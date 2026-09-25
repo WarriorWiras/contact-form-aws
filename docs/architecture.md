@@ -8,6 +8,7 @@ flowchart TB
     APP -->|CSI mount with Pod Identity| AS[Application secret in Secrets Manager]
     JOB[Restricted bootstrap Job] -->|Create app role and table| DB
     JOB -->|Read master secret and write app secret| AS
+    VERIFY[One-shot read-only Job] -->|SELECT demo rows| DB
     WS[Local workstation] -->|Terraform| AWS[AWS infrastructure]
     WS -->|Ansible and kubectl| APP
     AWS --> ALB
@@ -30,15 +31,15 @@ The Flask container runs as non-root, with no privilege escalation, a read-only 
 
 ## Secrets lifecycle
 
-Terraform sets RDS managed master credentials: RDS generates the password and keeps it in Secrets Manager. Terraform carries its **ARN**, never the secret value. The bootstrap Job, run by Ansible after RDS is available, uses temporary credentials from a dedicated Pod Identity role to create an idempotent application role and app secret. It never prints either password. The application Pod mounts the application secret as a file using the Secrets Store CSI Driver and the AWS provider. A password rotation requires a controlled rollout/reconnect path; implement and verify before claiming automatic application rotation.
+Terraform sets RDS managed master credentials: RDS generates the password and keeps it in Secrets Manager. Terraform carries its **ARN**, never the secret value. The bootstrap Job, run by Ansible after RDS is available, uses temporary credentials from a dedicated Pod Identity role to create the application INSERT role, a separate SELECT-only verifier role, their secrets, and the table. It never prints passwords. The Flask Pod mounts only its application secret via the Secrets Store CSI Driver. A password rotation requires a controlled rollout/reconnect path; automatic application rotation is not enabled.
 
 ## Resource ownership and order
 
 1. **Terraform:** foundational network, EKS/node group/add-ons needed for Pod Identity, RDS, IAM/Pod Identity associations, ECR, logging and applicable AWS security controls. Also produce non-secret outputs (cluster name, ECR URL, RDS endpoint and secret ARNs).
-2. **Ansible:** build/push image from the workstation, install/upgrade the AWS Load Balancer Controller and CSI/AWS provider, configure namespace/service accounts, bootstrap restricted database role, apply deployment/service/Ingress, and wait for rollout/ALB address.
+2. **Ansible:** build/push images from the workstation, install/upgrade the AWS Load Balancer Controller and CSI/AWS provider, configure namespace/service accounts, bootstrap restricted database roles, apply deployment/service/Ingress, and wait for rollout/ALB address.
 3. **AWS Load Balancer Controller:** creates and manages ALB/listeners/target groups/security group from Ingress using Terraform-supplied tagged subnets and tightly scoped IAM permissions. Teardown deletes Ingress first so its ALB is cleaned up before destroying the VPC.
 4. **Security checks:** record actual results for relevant CIS-aligned settings, including encryption, public access, logging, IAM and security groups. Enable AWS Foundational Security Best Practices in Security Hub only if the account plan supports it; do not claim a Security Hub finding when it is unavailable.
 
 ## Demo verification
 
-Show `terraform plan/apply`, EKS nodes, private RDS and its master secret **metadata only**, app secret metadata only, Ansible rerun, Ingress ALB DNS/target health, a harmless sample form submission, and a parameterized SQL query showing the stored row. Never expose secret values in terminal output, screenshots or Git. Record both remediated findings and remaining exceptions. Repeatability needs a second apply/playbook run with no unexpected changes.
+Show `terraform plan/apply`, EKS nodes, private RDS and its master secret **metadata only**, app secret metadata only, Ansible rerun, Ingress ALB DNS/target health, a harmless sample form submission, and the separate SELECT-only verifier Job showing the stored row. Never expose secret values in terminal output, screenshots or Git. Record both remediated findings and remaining exceptions. Repeatability needs a second apply/playbook run with no unexpected changes.
