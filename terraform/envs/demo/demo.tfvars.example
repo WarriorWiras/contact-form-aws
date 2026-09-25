@@ -1,0 +1,4 @@
+# Copy to demo.tfvars and set your own current public IPv4 address.
+# Never commit the real tfvars file or terraform.tfstate.
+operator_cidr = "203.0.113.10/32"
+node_count    = 2
