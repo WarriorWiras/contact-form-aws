@@ -6,4 +6,6 @@ The database bootstrap phase must create the table from `schema.sql` and give th
 
 Local development requires Python 3.12+, PostgreSQL, a credential JSON file outside Git and the configuration `DB_HOST`, `DB_NAME`, `DB_SECRET_FILE`. Install `requirements.txt` in a virtual environment. Run `python -m unittest discover -s tests -v` for application behavior tests. Docker builds use the non-root user `10001` and serve the app with Gunicorn on port 8000.
 
+Database TLS defaults to `require`. Only for a private, temporary local PostgreSQL container without TLS, set `DB_SSLMODE=disable` in the local Flask container. Do not set this override in the EKS deployment: RDS connections must use TLS.
+
 No AWS resources are required to build or test this application. Its connection to EKS/RDS remains unverified until deployment.

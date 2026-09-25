@@ -22,7 +22,7 @@ def database_settings():
         "dbname": os.environ["DB_NAME"],
         "user": secret["username"],
         "password": secret["password"],
-        "sslmode": "require",
+        "sslmode": os.getenv("DB_SSLMODE", "require"),
         "connect_timeout": 3,
     }
 
