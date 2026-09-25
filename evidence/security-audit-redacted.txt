@@ -1,0 +1,140 @@
+EKS endpoint access and control-plane logs
+{
+    "version": "1.35",
+    "endpointPrivate": true,
+    "endpointPublic": true,
+    "publicCIDRs": [
+        "[OPERATOR IP REDACTED]"
+    ],
+    "logging": [
+        {
+            "types": [
+                "api",
+                "audit",
+                "authenticator",
+                "controllerManager",
+                "scheduler"
+            ],
+            "enabled": true
+        }
+    ]
+}
+Managed node placement and capacity
+{
+    "subnets": [
+        "subnet-01c719fe52f2b1128",
+        "subnet-0f0b4ae5c49dbc58f"
+    ],
+    "instanceTypes": [
+        "m7i-flex.large"
+    ],
+    "scaling": {
+        "minSize": 0,
+        "maxSize": 2,
+        "desiredSize": 2
+    }
+}
+RDS public access, encryption and backups (master secret ARN only)
+{
+    "public": false,
+    "storageEncrypted": true,
+    "backupDays": 1,
+    "multiAZ": false,
+    "masterSecret": "[ARN REDACTED]",
+    "subnetGroup": "contact-demo-db"
+}
+Database subnet routes (only the VPC local route is expected)
+[
+    [
+        "10.42.0.0/16",
+        "local",
+        null
+    ]
+]
+Database security group rules
+[
+    [
+        false,
+        "tcp",
+        5432,
+        5432,
+        null,
+        "sg-0e3f04558daabe908"
+    ]
+]
+Application and verifier secret metadata (never secret values)
+{
+    "arn": "[ARN REDACTED]",
+    "rotationEnabled": null
+}
+{
+    "arn": "[ARN REDACTED]",
+    "rotationEnabled": null
+}
+Internet-facing ALB security group ingress/egress
+{
+    "ingress": [
+        {
+            "IpProtocol": "tcp",
+            "FromPort": 80,
+            "ToPort": 80,
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+                {
+                    "Description": "Temporary public contact form demo",
+                    "CidrIp": "0.0.0.0/0"
+                }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+        }
+    ],
+    "egress": [
+        {
+            "IpProtocol": "tcp",
+            "FromPort": 8000,
+            "ToPort": 8000,
+            "UserIdGroupPairs": [
+                {
+                    "Description": "Only Flask IP targets",
+                    "UserId": "[ACCOUNT REDACTED]",
+                    "GroupId": "sg-0e3f04558daabe908"
+                }
+            ],
+            "IpRanges": [],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+        }
+    ]
+}
+Deployer MFA device count
+1
+EKS control-plane log retention and ECR image scanning/encryption
+[
+    [
+        "/aws/eks/contact-demo/cluster",
+        7
+    ]
+]
+[
+    [
+        "contact-demo",
+        true,
+        "AES256"
+    ]
+]
+Kubernetes namespace labels, services and application RBAC
+NAME           STATUS   AGE   LABELS
+contact-form   Active   29m   kubernetes.io/metadata.name=contact-form,pod-security.kubernetes.io/audit=restricted,pod-security.kubernetes.io/enforce=restricted
+NAME                          AGE
+serviceaccount/contact-form   29m
+serviceaccount/db-bootstrap   29m
+serviceaccount/db-verifier    29m
+serviceaccount/default        29m
+
+NAME                           READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/contact-form   2/2     2            2           29m
+
+NAME                                     CLASS   HOSTS   ADDRESS                                                                   PORTS   AGE
+ingress.networking.k8s.io/contact-form   alb     *       [ALB REDACTED]   80      29m
+no
