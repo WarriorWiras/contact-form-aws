@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Contact us</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 38rem; padding: 2rem 1rem; margin: auto; line-height: 1.5; color: #182230; }
+    label { display: block; margin: 1rem 0 .3rem; font-weight: 600; }
+    input, textarea { width: 100%; box-sizing: border-box; padding: .65rem; font: inherit; border: 1px solid #667085; border-radius: .3rem; }
+    button { margin-top: 1rem; padding: .7rem 1.2rem; background: #175cd3; color: white; border: 0; border-radius: .3rem; font: inherit; cursor: pointer; }
+    .notice { padding: .75rem; border-radius: .3rem; background: #ecfdf3; }
+    .error { padding: .75rem; border-radius: .3rem; background: #fef3f2; }
+  </style>
+</head>
+<body>
+  <h1>Contact us</h1>
+  {% if submitted %}<p class="notice" role="status">Thank you. Your message was received.</p>{% endif %}
+  {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+  <form action="{{ url_for('submit') }}" method="post">
+    <label for="name">Name</label>
+    <input id="name" name="name" maxlength="100" required value="{{ name | default('') }}">
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" maxlength="254" required value="{{ email | default('') }}">
+    <label for="message">Message</label>
+    <textarea id="message" name="message" maxlength="2000" rows="6" required>{{ message | default('') }}</textarea>
+    <button type="submit">Send message</button>
+  </form>
+</body>
+</html>
