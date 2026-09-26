@@ -101,14 +101,6 @@ python -m unittest discover -s tests -v
 cd ..
 ```
 
-## For the live demo
-
-[The demo checklist](docs/demo-checklist.md) follows the assignment's ten steps. The running EKS cluster and RDS database already exist. A no-change Terraform plan or apply cannot recreate them; a fresh build would need to be arranged before the meeting.
-
-After this README update, the first Ansible run may build images again. Its image tag includes `app/README.md`. Once the first run finishes and the ALB is healthy, a second unchanged run should show `changed=0` and `failed=0`.
-
-The app uses Secrets Manager for its database password. The demo should show secret **names or ARNs**, never a password. [The security notes](docs/security-controls.md) include the checks and the remaining issues: public HTTP, an EKS API open only to the operator's `/32`, temporary broad setup permissions, and Security Hub being unavailable on this Free Plan. The ALB comes from the AWS controller, not a direct Terraform `aws_lb` resource.
-
 ## Credit and cleanup
 
 The live `node_count` is one. Zero workers would stop the form, but EKS, RDS, NAT, ALB and other resources would still use credit. Two workers give more redundancy but use more compute. The last credit figure in the evidence was a snapshot; check AWS again before leaving the stack running.
@@ -132,7 +124,7 @@ Confirm this project's ALB is gone before `destroy`. Destroy deletes the sample 
 - `app/`: Flask code, database helper and tests.
 - `k8s/`: the Kubernetes files Ansible uses.
 - `scripts/`: database check and security audit.
-- `docs/`: [architecture](docs/architecture.md), [requirements](docs/requirements-matrix.md), [security notes](docs/security-controls.md) and [demo checklist](docs/demo-checklist.md).
+- `docs/`: [architecture](docs/architecture.md), [requirements](docs/requirements-matrix.md), [security notes](docs/security-controls.md).
 - `evidence/`: redacted checks safe for Git. Raw files stay in the ignored `evidence/private/` folder.
 
 The first worker type tried on 25 September was `t3.medium`, which this Free Plan account rejected. Terraform now defaults to the eligible `m7i-flex.large`. The old failed plan must not be reused; any repair needs a fresh plan with the same private state and variables.
