@@ -2,7 +2,7 @@
 
 ```mermaid
 flowchart TB
-    U[Browser] -->|HTTPS when domain and ACM are available| ALB[Public ALB]
+    U[Browser] -->|HTTP demo; HTTPS with domain and ACM| ALB[Public ALB]
     ALB -->|Ingress IP targets| APP[Flask Pods on private EKS nodes]
     APP -->|TCP 5432| DB[(RDS PostgreSQL in isolated subnets)]
     APP -->|CSI mount with Pod Identity| AS[Application secret in Secrets Manager]
@@ -27,7 +27,7 @@ The VPC spans two Availability Zones. Each zone has a public subnet for the ALB,
 | Bootstrap service account | RDS master secret and application secret | Restricted read/write, limited to initialization |
 | Operator public IP | EKS public API endpoint | TCP 443 allowlisted; private endpoint also enabled |
 
-The Flask container runs as non-root, with no privilege escalation, a read-only root filesystem where feasible, resource requests/limits and readiness/liveness checks. A ClusterIP Service feeds an IP-target ALB Ingress. Kubernetes RBAC separates deployer and application service accounts. EKS control-plane logs and RDS storage encryption are enabled. The application's SQL role receives table-specific privileges and cannot administer the database.
+The Flask container runs as non-root, with no privilege escalation, a read-only root filesystem, resource requests/limits and readiness/liveness checks. A ClusterIP Service feeds an IP-target ALB Ingress. The application uses a dedicated Kubernetes service account with no Role or RoleBinding granting Kubernetes API access; a `kubectl auth can-i list secrets` check returned `no`. AWS Pod Identity separately scopes its Secrets Manager access. EKS control-plane logs and RDS storage encryption are enabled. The application's SQL role receives table-specific privileges and cannot administer the database.
 
 ## Secrets lifecycle
 
