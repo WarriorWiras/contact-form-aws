@@ -10,7 +10,8 @@
 - [x] Run `./scripts/verify.sh` to show the row via the separate SELECT-only verifier role.
 - [x] Re-run corrected `./scripts/security-audit.sh`; manually verified EKS logs/retention, ECR scanning/encryption, Pod security bounds/probes and database isolation. Security Hub read-only API returned `SubscriptionRequiredException`; documented in `docs/security-controls.md`.
 - [x] Re-ran Ansible (`changed=0`, `failed=0`) and Terraform plan (`No changes`).
-- [x] Scaled managed workers from two to one using Terraform on 25 September. Waited for the old node to disappear; one node remained Ready, both Flask Pods remained Ready and ALB `/health/ready` returned HTTP 200. The committed redacted audit snapshot predates this scale-down.
+- [x] Scaled managed workers from two to one using Terraform on 25 September. Waited for the old node to disappear; one node remained Ready, both Flask Pods remained Ready and ALB `/health/ready` returned HTTP 200. The original redacted audit snapshot predates this scale-down.
+- [x] On 26 September, confirmed Free Plan `ACTIVE`, one Ready worker, both Flask Pods available, Terraform `No changes` and ALB readiness HTTP 200. Committed a second redacted security audit showing desired size one; its basic redaction checks passed.
 - [ ] During the live demo, run `terraform plan -var-file=envs/demo/demo.tfvars` from WSL to show no drift; describe how the already provisioned cluster and RDS were created with the original `terraform apply`. Re-running a no-change apply will not recreate existing resources.
 - [ ] During the live demo, run `ansible-playbook ansible/deploy.yml` from WSL, show the ALB Ingress, submit a fresh fictional record and run `./scripts/verify.sh`; keep secret **values** off screen.
 - [ ] Keep demo available through the recruiter-requested time if credits permit; scaling workers to zero disables service but other AWS costs continue.
