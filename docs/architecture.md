@@ -1,45 +1,54 @@
-# Architecture decision and ownership
+# Architecture: how a form message reaches the database
 
 ```mermaid
 flowchart TB
-    U[Browser] -->|HTTP demo; HTTPS with domain and ACM| ALB[Public ALB]
-    ALB -->|Ingress IP targets| APP[Flask Pods on private EKS nodes]
-    APP -->|TCP 5432| DB[(RDS PostgreSQL in isolated subnets)]
-    APP -->|CSI mount with Pod Identity| AS[Application secret in Secrets Manager]
-    JOB[Restricted bootstrap Job] -->|Create app role and table| DB
-    JOB -->|Read master secret and write app secret| AS
-    VERIFY[One-shot read-only Job] -->|SELECT demo rows| DB
-    WS[Local workstation] -->|Terraform| AWS[AWS infrastructure]
-    WS -->|Ansible and kubectl| APP
-    AWS --> ALB
+    B["Visitor's browser"] -->|HTTP demo| L["Public AWS ALB"]
+    L -->|Port 8000| F["Flask Pods on private EKS workers"]
+    F -->|Encrypted PostgreSQL connection| D[("Private RDS database")]
+    F -->|Read app password| S["AWS Secrets Manager"]
+    J["One-time database setup Job"] -->|Create table and users| D
+    J -->|Store new passwords| S
+    V["Read-only demo Job"] -->|Show sample rows| D
 ```
 
-The VPC spans two Availability Zones. Each zone has a public subnet for the ALB, a private subnet for EKS managed nodes/Pods, and an isolated database subnet for RDS. Public subnets route through an Internet Gateway. Application private subnets use one NAT gateway initially to reach container registries and AWS endpoints; this is a cost/reliability tradeoff for a short-lived demonstration. Database subnets have no default internet route. Nodes have no public IPs. Tags on public subnets permit ALB discovery.
+**In one sentence:** the ALB receives the visitor's request, Flask saves the form in RDS, and Secrets Manager supplies Flask's database login without putting a password in the code.
 
-## Traffic and permission boundaries
+## Which tool creates each part?
 
-| Source | Destination | Allowed access |
+| Part | Who sets it up? | Why? |
 | --- | --- | --- |
-| Internet | ALB | TCP 443 if ACM certificate/domain exists; otherwise temporary demo TCP 80 |
-| ALB security group | EKS Pod targets | Application port only, via target-group traffic |
-| Flask Pods / node network | RDS security group | TCP 5432 only |
-| Flask service account | Application secret ARN | `secretsmanager:GetSecretValue`, `DescribeSecret` only |
-| Bootstrap service account | RDS master secret and application secret | Restricted read/write, limited to initialization |
-| Operator public IP | EKS public API endpoint | TCP 443 allowlisted; private endpoint also enabled |
+| VPC (AWS network), public/private/isolated subnets, security groups | Terraform | Keep only the ALB public; keep the app and database in private network areas. |
+| EKS, worker nodes, RDS, ECR, IAM roles, logs, secret containers | Terraform | Give the app a place to run, a database, a container image store and controlled access. |
+| Container images, Kubernetes Deployment, Service, Ingress and database setup Job | Ansible | Put the app on EKS and connect it to RDS. |
+| Actual ALB, listener and targets | AWS Load Balancer Controller | It reads the Ingress made by Ansible and creates the ALB in AWS. |
 
-The Flask container runs as non-root, with no privilege escalation, a read-only root filesystem, resource requests/limits and readiness/liveness checks. A ClusterIP Service feeds an IP-target ALB Ingress. The application uses a dedicated Kubernetes service account with no Role or RoleBinding granting Kubernetes API access; a `kubectl auth can-i list secrets` check returned `no`. AWS Pod Identity separately scopes its Secrets Manager access. EKS control-plane logs and RDS storage encryption are enabled. The application's SQL role receives table-specific privileges and cannot administer the database.
+This last row matters during the interview: **there is no `aws_lb` resource in Terraform**. Terraform provides the ALB's network and IAM permissions; the controller creates the actual ALB from Kubernetes instructions.
 
-## Secrets lifecycle
+## Why there are different network areas
 
-Terraform sets RDS managed master credentials: RDS generates the password and keeps it in Secrets Manager. Terraform carries its **ARN**, never the secret value. The bootstrap Job, run by Ansible after RDS is available, uses temporary credentials from a dedicated Pod Identity role to create the application INSERT role, a separate SELECT-only verifier role, their secrets, and the table. It never prints passwords. The Flask Pod mounts only its application secret via the Secrets Store CSI Driver. A password rotation requires a controlled rollout/reconnect path; automatic application rotation is not enabled.
+The VPC uses two AWS Availability Zones. In each zone, there is a **public subnet** for the ALB, a **private app subnet** for EKS workers/Pods, and an **isolated database subnet** for RDS. The database subnets have no route to the public internet. The app subnets use one NAT gateway to reach AWS services and download images. That single NAT saves some demo cost but is a single point of failure.
 
-## Resource ownership and order
+| Who can talk to whom? | Rule in this demo |
+| --- | --- |
+| Public internet → ALB | Port 80 (HTTP) for the temporary demo. HTTPS needs a domain and ACM certificate. |
+| ALB → Flask Pods | App port 8000 through the allowed security groups. |
+| EKS workers/Flask → RDS | Database port 5432; RDS is not publicly accessible. |
+| Flask identity → Secrets Manager | Read **only** the application secret it needs. |
+| My current public IP → EKS API | Allowed from my single `/32` address; EKS's private API is also on. |
 
-1. **Terraform:** foundational network, EKS/node group/add-ons needed for Pod Identity, RDS, IAM/Pod Identity associations, ECR, logging and applicable AWS security controls. Also produce non-secret outputs (cluster name, ECR URL, RDS endpoint and secret ARNs).
-2. **Ansible:** build/push images from the workstation, install/upgrade the AWS Load Balancer Controller and CSI/AWS provider, configure namespace/service accounts, bootstrap restricted database roles, apply deployment/service/Ingress, and wait for rollout/ALB address.
-3. **AWS Load Balancer Controller:** creates and manages ALB/listeners/target groups/security group from Ingress using Terraform-supplied tagged subnets and tightly scoped IAM permissions. Teardown deletes Ingress first so its ALB is cleaned up before destroying the VPC.
-4. **Security checks:** record actual results for relevant CIS-aligned settings, including encryption, public access, logging, IAM and security groups. Enable AWS Foundational Security Best Practices in Security Hub only if the account plan supports it; do not claim a Security Hub finding when it is unavailable.
+The app's Kubernetes service account has no role that lets it list Kubernetes Secrets; the check returned `no`. The Flask container runs as a non-root user with no extra privileges and has CPU/memory limits and health checks. EKS logs and RDS storage encryption are turned on.
 
-## Demo verification
+## Where the passwords come from
 
-Show `terraform plan/apply`, EKS nodes, private RDS and its master secret **metadata only**, app secret metadata only, Ansible rerun, Ingress ALB DNS/target health, a harmless sample form submission, and the separate SELECT-only verifier Job showing the stored row. Never expose secret values in terminal output, screenshots or Git. Record both remediated findings and remaining exceptions. Repeatability needs a second apply/playbook run with no unexpected changes.
+1. RDS generates a **master database password** and keeps it in AWS Secrets Manager.
+2. Ansible starts a one-time Job inside EKS. The Job reads the master secret, creates the database table and generates two new passwords: an app user that can insert messages, and a verifier user that can only read rows.
+3. The Job saves those passwords as separate Secrets Manager secrets. Flask mounts **only its own** secret as a file through the Secrets Store CSI driver and AWS Pod Identity.
+4. Terraform holds secret **names/ARNs**, not password values. No password is printed in the deployment guide.
+
+Automatic rotation of the app and verifier passwords has **not** been set up. The public website also uses HTTP, and the EKS public API is allowed for only the operator's `/32`. These are [documented demo limits](security-controls.md).
+
+## How I explain this in the live demo
+
+“I ran Terraform on my WSL laptop to create the network, EKS, RDS and IAM roles. I then ran Ansible to build and deploy Flask and the Kubernetes Ingress. The AWS controller created the ALB from that Ingress. A made-up form entry reached the private database, and a separate read-only Job showed the saved row. I checked the security settings and documented what I could not enable on my Free Plan.”
+
+Run the [demo checklist](demo-checklist.md) for exact commands. Show **secret metadata only**; never display passwords or the raw audit file.

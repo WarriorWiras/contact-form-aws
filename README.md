@@ -1,112 +1,186 @@
-# Contact form on AWS EKS
+# Contact form on AWS
 
-Terraform provisions the foundational AWS infrastructure. Ansible builds the images on a local workstation, pushes them to ECR, installs the EKS controllers, bootstraps PostgreSQL, and deploys the Flask application. The AWS Load Balancer Controller creates the ALB from Ansible's Ingress. [Architecture](docs/architecture.md) · [Requirement-by-requirement review](docs/requirements-matrix.md) · [Security checks](docs/security-controls.md) · [Demo checklist](docs/demo-checklist.md).
+This is my SIT DevSecOps internship assignment. A visitor fills in a Flask form with a name, email and message. The message goes through an AWS Application Load Balancer (ALB) to Flask on Amazon EKS, then into PostgreSQL on Amazon RDS.
 
-**Demo status (25 September 2026):** Local tests passed, Terraform provisioned the AWS environment, and Ansible deployed two ready Flask Pods. An ALB readiness request returned HTTP 200 and a fictional submission was retrieved from RDS using the read-only verifier Job. The node group was then scaled from two workers to one: after the old worker left, the sole node was Ready, both Flask Pods were available and ALB readiness still returned HTTP 200. This sacrifices node redundancy to reduce compute use. Security observations and outstanding exceptions are recorded in [the security controls document](docs/security-controls.md). Confirm the remaining AWS credit before leaving the stack running; this deployment is still consuming credits.
+I run the setup from **Ubuntu WSL on my Windows laptop**. Terraform creates the AWS foundation. Ansible builds and deploys the app. The AWS Load Balancer Controller then creates the ALB from the Kubernetes Ingress. [See the architecture picture](docs/architecture.md).
 
-**Follow-up (26 September 2026):** The Free Plan was `ACTIVE`; a fresh Terraform plan showed `No changes`, one worker and both Flask Pods were Ready, and the ALB readiness endpoint returned HTTP 200. A [new redacted security audit](evidence/security-audit-2026-09-26-redacted.txt) records desired size one. The credit balance is a point-in-time report, so recheck it during the demo window.
+## Where the project stands
 
-## Prerequisites
+- **25 September 2026:** I created the AWS resources with Terraform, deployed with Ansible, sent a fictional form entry and read it back from RDS. I scaled the worker nodes from two to one to use fewer credits.
+- **26 September 2026:** The AWS Free Plan was active. One worker was Ready, both Flask Pods were available, Terraform said `No changes`, and the ALB health check returned HTTP 200. The [latest redacted security audit](evidence/security-audit-2026-09-26-redacted.txt) shows one worker.
+- The live interview demo and eventual AWS cleanup are still to be done. AWS resources continue using credits even when my laptop is off.
 
-Use Ubuntu WSL2 with AWS CLI, Terraform >=1.9, Docker with WSL integration, kubectl, Helm, Python 3 and Ansible Core. The `contact-demo` AWS CLI profile must resolve to an IAM user with permissions to create the listed AWS services, never the account root. This demo uses `us-east-1`. The example initially requests two Free Plan eligible `m7i-flex.large` nodes (4 vCPUs total) and one `db.t4g.micro`; the live node group was later scaled to one node by setting `node_count = 1` in the ignored `demo.tfvars`. Check regional quotas and your account's allowed types with `aws ec2 describe-instance-types --filters Name=free-tier-eligible,Values=true --query 'InstanceTypes[].InstanceType' --output text` before applying.
+For a detailed assignment checklist, see [requirements](docs/requirements-matrix.md). For findings and limitations, see [security controls](docs/security-controls.md).
 
-For Ansible's Kubernetes modules, install the collection and Python dependencies in the Ansible pipx environment:
+## Words I use in the demo
+
+| Word | Simple meaning here |
+| --- | --- |
+| Terraform | Code that creates the AWS network, EKS cluster, database, roles and other basic resources. |
+| Ansible | The playbook that builds the container images and puts the app into EKS. |
+| EKS / worker | AWS-managed Kubernetes / the private computer where my app containers run. |
+| Pod / Deployment | A running app container / instructions that keep the desired app Pods running. |
+| RDS | The private PostgreSQL database where submitted messages are stored. |
+| Secrets Manager | AWS storage for the database passwords; I do not put passwords in Git. |
+| ECR | AWS storage for the container images built on my laptop. |
+| Ingress / ALB | Kubernetes traffic instructions / the public entry point created from them. |
+| `terraform.tfstate` | Terraform's private record of what it created. I need it for updates and cleanup. |
+
+## Start a WSL session for the existing deployment
+
+In Windows PowerShell, open Ubuntu with `wsl -d Ubuntu`. Then run these commands **from the project folder**:
+
+```bash
+cd ~/projects/contact-form-aws
+export PATH="$HOME/.local/bin:$PATH"
+export AWS_PROFILE=contact-demo AWS_DEFAULT_REGION=us-east-1
+aws sts get-caller-identity --query Arn --output text
+```
+
+The last command should show `user/contact-demo-deployer`, **not** `root`. If it says the login session has expired, run `aws login --profile contact-demo --region us-east-1`, finish the browser/MFA steps and try again. This login normally needs renewing after a session expires; it does not mean EKS has stopped.
+
+Check credits and the running app:
+
+```bash
+aws freetier get-account-plan-state \
+  --query '{plan:accountPlanType,status:accountPlanStatus,remaining:accountPlanRemainingCredits}' \
+  --output json
+kubectl get nodes
+kubectl -n contact-form get deployment,ingress
+terraform -chdir=terraform plan -var-file=envs/demo/demo.tfvars
+```
+
+Expected today: Free Plan active, **one** Ready worker, Flask Deployment **2/2** available and Terraform `No changes`. Credit figures can change; use the current AWS result, not the older number written in the evidence. `terraform plan` checks for changes; it does not create anything.
+
+Find the ALB and check that the app can reach the database:
+
+```bash
+ALB_HOST="$(kubectl -n contact-form get ingress contact-form \
+  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')"
+echo "http://$ALB_HOST"
+curl --max-time 15 -i "http://$ALB_HOST/health/ready"
+```
+
+`HTTP 200` with `ready` means Flask answered **and** its database check worked. Open the printed address in a browser for the form. Use made-up names and email addresses only.
+
+## First-time setup on a new workstation or account
+
+These are the original build steps. **If the AWS stack is already running, do not copy the example variables over your real `demo.tfvars` or try to create a second stack for practice.** Terraform, AWS CLI, Docker, kubectl, Helm, Python and Ansible Core must be installed in Ubuntu WSL. Docker Desktop needs Ubuntu WSL integration. Terraform needs version 1.9 or newer.
+
+Install Ansible's Kubernetes support if missing:
 
 ```bash
 ansible-galaxy collection install -r ansible/requirements.yml
 pipx inject ansible-core kubernetes PyYAML jsonpatch
 ```
 
-Run these from the repository root inside WSL. Confirm credentials, credits, billing alerts and quotas before proceeding. Only enter sample contact data. Terraform state is local, ignored by Git, and contains infrastructure metadata; keep it private and back it up securely until teardown.
-
-## Local application check
-
-```bash
-python3 -m venv .venv
-. .venv/bin/activate
-python -m pip install -r app/requirements.txt
-python -m unittest discover -s app/tests -v
-```
-
-The repository's `app/README.md` explains local PostgreSQL testing. Production defaults to `DB_SSLMODE=require`; `DB_SSLMODE=disable` is for a disposable local PostgreSQL container without TLS only. Do not set it in EKS.
-
-## Provision from WSL
-
-1. Check the balance in Billing and set cost alerts. This stack consumes credits while it exists: EKS control plane, EC2 nodes, RDS, NAT gateway, ALB, logs and Secrets Manager. Scaling nodes to zero does **not** stop the other charges. Do the practice run close to the demo; delete the stack afterwards.
-2. Set the EKS API allowlist to your *current* public IPv4, with `/32`. The example address is a placeholder. A changed home IP requires updating the tfvars and reapplying Terraform.
+1. Check remaining Free Plan credit, AWS billing alerts and the EC2/RDS types allowed for this account. This stack uses credit for EKS, workers, RDS, NAT, ALB, logs and secrets.
+2. On a **first build only**, copy `terraform/envs/demo/demo.tfvars.example` to `terraform/envs/demo/demo.tfvars`. Replace `operator_cidr` with your current public IPv4 address followed by `/32`. This limits who can reach the EKS API. The example address is not usable. The example starts with two workers; the running demo uses `node_count = 1` in the private file.
+3. Keep the real `demo.tfvars` and `terraform.tfstate` off Git. If your home IP changes, update `operator_cidr` and apply Terraform again.
 
 ```bash
-export AWS_PROFILE=contact-demo AWS_DEFAULT_REGION=us-east-1
-aws sts get-caller-identity --query Arn --output text
-cp terraform/envs/demo/demo.tfvars.example terraform/envs/demo/demo.tfvars
-# Edit terraform/envs/demo/demo.tfvars: replace operator_cidr with YOUR public IPv4/32.
+cp terraform/envs/demo/demo.tfvars.example terraform/envs/demo/demo.tfvars  # first build only
+# Edit demo.tfvars and set operator_cidr to YOUR public IPv4/32.
 terraform -chdir=terraform fmt -check -recursive
 terraform -chdir=terraform init
 terraform -chdir=terraform validate
 terraform -chdir=terraform plan -var-file=envs/demo/demo.tfvars -out=demo.tfplan
 ```
 
-Review the planned resource count and costs against the **actual remaining** Free Plan credits before running the next command:
+`fmt` checks layout, `init` gets the Terraform providers, `validate` checks the configuration, and `plan` shows what AWS resources would be created. Read the plan and confirm there is enough credit. Only then run:
 
 ```bash
 terraform -chdir=terraform apply demo.tfplan
 aws eks update-kubeconfig --name contact-demo --region us-east-1 --alias contact-demo
 kubectl get nodes -o wide
 aws rds describe-db-instances --db-instance-identifier contact-demo-postgres \
-  --query 'DBInstances[0].{endpoint:Endpoint.Address,public:PubliclyAccessible}'
+  --query 'DBInstances[0].{status:DBInstanceStatus,public:PubliclyAccessible,encrypted:StorageEncrypted}' \
+  --output table
 aws secretsmanager describe-secret --secret-id contact-demo/app-db \
-  --query '{name:Name,arn:ARN}'
+  --query '{name:Name,arn:ARN}' --output json
 ```
 
-The app secret's first version is created by the Ansible database bootstrap Job. Never print its `SecretString` during the demo.
+`apply` creates the resources; `update-kubeconfig` lets kubectl talk to EKS. Look for Ready workers, private/encrypted RDS, and a Secrets Manager **name and ARN**. Terraform creates the app secret container; Ansible's database Job adds its first password later. Never display `SecretString`.
 
-## Deploy and verify
+### Deploy the application
+
+Run Ansible after Terraform and at least one worker are ready:
 
 ```bash
 ansible-playbook ansible/deploy.yml
-kubectl -n contact-form get deployments,services,ingresses,jobs
+kubectl -n contact-form get deployment,service,ingress,pods
 kubectl -n contact-form rollout status deployment/contact-form
 ```
 
-Ansible prints the ALB HTTP address when the Ingress receives a hostname. Wait a few minutes for healthy ALB targets, then browse to that address and submit a **fictional** name, email and message. Confirm the row with the short-lived, SELECT-only verifier:
+Ansible builds the Flask and database-helper images on this laptop, sends them to ECR, installs the ALB and secret-mounting helpers in EKS, creates the database table and limited-access database users, and starts Flask. It prints the ALB address. The first run changes resources; a repeat run should finish with `changed=0` when nothing changed. Two healthy Flask Pods show as **2/2** even though the current demo uses **one worker**.
+
+**After this README rewrite:** the playbook's image tag includes tracked files under `app/`, including `app/README.md`. Its first run after the new commit may rebuild both images and start a new database setup Job, even though the Flask code stayed the same. Let that run finish and check the app; run Ansible again to show `changed=0`. Do this before the scheduled demo if you want a short, predictable repeat run during the meeting.
+
+### Prove the form saves a message
+
+Open the ALB address, enter a **fictional** name, email and message, and submit the form. Then run:
 
 ```bash
 ./scripts/verify.sh
-mkdir -p evidence/private
-./scripts/security-audit.sh > evidence/private/security-audit.txt
-chmod 600 evidence/private/security-audit.txt
-ansible-playbook ansible/deploy.yml  # rerun to check idempotence
-terraform -chdir=terraform plan -var-file=envs/demo/demo.tfvars
 ```
 
-The security audit is mixed text/JSON; redact ARNs, addresses and user information before sharing it. The initial 25 September audit used the wrong EKS API response field and returned `null` for endpoint settings; the script is corrected and an independent `describe-cluster` query confirmed private access and a public operator `/32`. See `docs/security-controls.md` for confirmed checks and exceptions. The read-only Security Hub API returned `SubscriptionRequiredException` on this Free Plan account; the repository reports manual AWS control comparisons, not AWS-generated findings. Do not activate advanced account features or upgrade just for this demo. The public listener uses HTTP without a personal domain/ACM certificate: this is an explicit temporary demo exception. Do not submit real contact information.
+This creates a short-lived verification Job inside EKS. It can **read** recent database rows but cannot change them. A line showing the fictional message proves that the form reached RDS.
 
-## Pause and teardown
+The local Flask unit tests do not need AWS. From the project folder:
 
-If pausing briefly, change `node_count = 0` in `terraform/envs/demo/demo.tfvars`, then run `terraform plan/apply` again. EKS, RDS, NAT, ALB and secret charges continue, and the form becomes unavailable. Raise it to **at least 1** and reapply before the demo; the verified one-worker setup runs both Flask Pods on the same node, so choose 2 if worker redundancy is needed and credits permit. Do **not** lose the local Terraform state.
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -r app/requirements.txt
+cd app
+python -m unittest discover -s tests -v
+cd ..
+```
 
-After the final demonstration, remove the Ingress first so its controller can delete the ALB, then destroy the stack. Keep at least one working node until ALB deletion is confirmed:
+The tests check input handling, database inserts and the ready endpoint. For local Docker/PostgreSQL testing, see [the app guide](app/README.md).
+
+## What to show and say in the live demo
+
+Use the [short demo checklist](docs/demo-checklist.md) to keep your place. The full stack **already exists**: a no-change Terraform plan or apply shows that it is managed, but will not recreate EKS and RDS. If the reviewer expects a brand-new build during the meeting, agree on that in advance; do not destroy the working app just to show creation.
+
+| Show | What it proves |
+| --- | --- |
+| `terraform -chdir=terraform plan -var-file=envs/demo/demo.tfvars` | My laptop can read the Terraform setup and AWS resources match it. |
+| `kubectl get nodes` | My EKS worker is running in a private subnet. |
+| `aws rds describe-db-instances ...` | RDS is private and its storage is encrypted. |
+| `aws secretsmanager describe-secret ...` | The secret exists. Show its name, **not its password**. |
+| `ansible-playbook ansible/deploy.yml` | My laptop can repeat the app deployment. |
+| `kubectl -n contact-form get deployment,service,ingress` | Flask, the internal Service and the ALB route exist. |
+| ALB browser page, fictional submission, `./scripts/verify.sh` | A message travels from the form to PostgreSQL. |
+| [security notes](docs/security-controls.md) and redacted audit | What I checked, what I fixed, and which demo limits remain. |
+
+The ALB is made by the **AWS Load Balancer Controller** after Ansible creates the Ingress; Terraform provides its networking and permissions. The public form currently uses **HTTP**. EKS also has a public API limited to the operator's `/32`. Security Hub was not available in this Free Plan, so the security findings are **manual checks**, not AWS-generated scores. Do not use real contact details for this HTTP demo.
+
+## Credits, pause and cleanup
+
+Turning off the laptop does **not** stop AWS charges/credit use. Changing `node_count` in the private tfvars from `1` to `0` pauses workers and makes the app unavailable, but EKS, RDS, NAT, ALB and secrets still use credits. Change it to at least `1` and run Terraform plan/apply before a demo. Two workers offer more worker redundancy but use more compute.
+
+**After the agreed demo window**, clean up the AWS stack. Save redacted proof first. With at least one working node, delete the Ingress so the controller can remove the ALB; check that this project's ALB is gone before destroying the VPC:
 
 ```bash
 kubectl -n contact-form delete ingress contact-form --wait=true
-# Confirm in the AWS EC2 console or CLI that its ALB has disappeared.
-aws elbv2 describe-load-balancers --query 'LoadBalancers[].{name:LoadBalancerName,dns:DNSName}' --output table
+aws elbv2 describe-load-balancers \
+  --query 'LoadBalancers[].{name:LoadBalancerName,dns:DNSName}' --output table
 terraform -chdir=terraform destroy -var-file=envs/demo/demo.tfvars
 terraform -chdir=terraform state list
 ```
 
-After destroy, check the EKS cluster, RDS instance, NAT gateway, ALBs, ECR repo and Secrets Manager secrets in AWS. If the ALB remains, let its controller finish deleting before Terraform destroys VPC/network resources. RDS final snapshots are disabled for this disposable demo and both app secret recovery windows are zero: destroying the stack deletes the database and secrets. Save any redacted demo evidence before teardown.
+`destroy` removes the database and demo secrets **without a final RDS snapshot**. Keep the local Terraform state until cleanup succeeds, and check the AWS Console/CLI afterwards for any remaining EKS, RDS, NAT, ALB, ECR or Secrets Manager resources.
 
-## Failed node group recovery
+## If a first-time EKS node group fails
 
-The first demo apply on 25 September 2026 created the network, EKS cluster and RDS, but EKS rejected `t3.medium` because the Free Plan only permits Free Tier eligible EC2 types. The Terraform default now selects `m7i-flex.large`, which AWS identified as eligible in this account, with 8 GiB of RAM and 2 vCPUs per node. When recovering an existing failed node group, keep the local Terraform state and the same `operator_cidr` in the ignored tfvars file; run a fresh `terraform plan -var-file=envs/demo/demo.tfvars -out=repair.tfplan` and review the replacement actions. A failed EKS node group can remain in `CREATE_FAILED`; Terraform should replace the existing group if it is still present in state. Never reuse the original saved `demo.tfplan`, which still contains the disallowed instance type. If the replacement fails, inspect EKS health and Terraform state before any further apply.
+On 25 September, AWS rejected the first `t3.medium` worker for this Free Plan even though the other resources had been created. The Terraform default was changed to `m7i-flex.large`, an eligible type in this account. Do not reuse an old saved plan after changing worker type or IP. Keep the state and your private variables, make a **fresh plan**, read it, then apply it. If it still fails, inspect `aws eks describe-nodegroup` and the Terraform state before trying again. The [Terraform guide](terraform/README.md) has the basic commands.
 
-## Layout
+## Files to open during the demo
 
-- `app/`: Flask, container build, local tests, database bootstrap and read-only verifier.
-- `terraform/`: VPC, EKS, node group, RDS, ECR, IAM, Pod Identity, networking and Secrets Manager.
-- `ansible/`: local image publishing, controller setup, bootstrap and application deployment.
-- `k8s/`: namespace, service accounts, Job, CSI secret mount, deployment, service and ALB Ingress.
-- `scripts/`: read-only checks and temporary verifier Job.
-- `docs/`: architecture, requirement-by-requirement review, observed security checks/findings and live-demo checklist.
-- `evidence/`: redacted screenshots/check results; `evidence/private/` is ignored.
+- [Terraform](terraform/README.md): AWS network, EKS, RDS and permissions.
+- [Ansible](ansible/README.md): image builds and app deployment.
+- [Flask](app/README.md): what the form saves and how its password is loaded.
+- [Kubernetes](k8s/README.md): app Pods, Service, Ingress and secret mount.
+- [Evidence](evidence/README.md): safe redacted checks.
+- [Architecture](docs/architecture.md) and [security controls](docs/security-controls.md): the design and its known limits.
