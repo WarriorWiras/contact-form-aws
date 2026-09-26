@@ -14,22 +14,3 @@ The stack was built from Ubuntu WSL on 25 September 2026. A form entry went thro
 | Database passwords | RDS generates the master password. `app/bootstrap/bootstrap.py` generates the app and verifier passwords and stores them in Secrets Manager. Flask mounts only its own secret. No password is fixed in Terraform, Ansible, manifests or Flask source. |
 | Security hardening | Workers and RDS are private; Flask is non-root, has limits and cannot list Kubernetes Secrets. EKS logging and RDS encryption are on. [Security notes](security-controls.md) record the checks and limits. |
 | Foundational Security / CIS | [The audit script](../scripts/security-audit.sh) and [redacted evidence](../evidence/) show manual checks and findings. Security Hub returned `SubscriptionRequiredException` on the Free Plan, so there is no AWS-generated FSBP report. |
-| Workstation deployment and live demo | Terraform and Ansible ran from Ubuntu WSL. The build and end-to-end test passed. The interviewer's live demo is still pending. |
-
-## Files to submit
-
-1. Terraform: `terraform/`
-2. Ansible: `ansible/deploy.yml` and `ansible/requirements.yml`
-3. Flask: `app/`
-4. Kubernetes manifests and Helm steps: `k8s/` and `ansible/deploy.yml`
-5. Architecture diagram: `docs/architecture.md`
-6. Setup instructions: this repository's `README.md` and the folder READMEs
-7. Security hardening: `docs/security-controls.md`
-8. Control checks and findings: `scripts/security-audit.sh` and the redacted `evidence/` files
-9. Git history: https://github.com/WarriorWiras/contact-form-aws
-
-## Points to be clear about
-
-The ALB is automated but created by the Kubernetes controller, not directly by Terraform. Security Hub was unavailable, so the checks are manual. The public form is HTTP, the EKS API allows one operator IP, the deployment IAM user still has broad setup access, and the app passwords do not rotate automatically. One worker, single NAT and single-AZ RDS keep this a small demo rather than a highly available production setup.
-
-[Live demo notes](demo-checklist.md) cover the ten items the assignment asks to see. The submission email and interviewer's live demo remain to be completed.
