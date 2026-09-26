@@ -1,48 +1,26 @@
-# Terraform: create the AWS foundation
+# Terraform setup
 
-Terraform is the part I run from my laptop **before** Ansible. It makes the network, private EKS cluster workers, private PostgreSQL RDS database, IAM roles, ECR image repository, logging and Secrets Manager secret containers.
+Terraform creates the AWS side of the project: VPC and subnets, EKS and its workers, private PostgreSQL RDS, IAM roles, ECR, logs and Secrets Manager secret containers. The actual ALB is made later by the AWS Load Balancer Controller from the Ingress that Ansible deploys.
 
-The public ALB itself is created later by the AWS Load Balancer Controller when Ansible adds the Kubernetes Ingress. Terraform creates the subnets, network rules and IAM permissions that allow the controller to do that.
+The database has no public address. EKS workers are in private subnets, and RDS is in subnets with no route to the internet. Public access goes to the ALB. The EKS API is also reachable from one allowed operator IP (`/32`) so the laptop can deploy.
 
-## If this is the first build
-
-From the **main repository folder** in Ubuntu WSL:
+On a first build, `envs/demo/demo.tfvars.example` is copied to `envs/demo/demo.tfvars`, and `operator_cidr` is changed to the workstation's current public IP. The real tfvars and Terraform state stay out of Git. From the project root:
 
 ```bash
-export AWS_PROFILE=contact-demo AWS_DEFAULT_REGION=us-east-1
-cp terraform/envs/demo/demo.tfvars.example terraform/envs/demo/demo.tfvars
-# Edit demo.tfvars and replace operator_cidr with YOUR current public IPv4/32.
 terraform -chdir=terraform init
 terraform -chdir=terraform validate
 terraform -chdir=terraform plan -var-file=envs/demo/demo.tfvars -out=demo.tfplan
-```
-
-`init` downloads the providers Terraform needs. `validate` checks the code. `plan` lists the changes without creating anything. Review cost and remaining Free Plan credit before running:
-
-```bash
 terraform -chdir=terraform apply demo.tfplan
 ```
 
-**This AWS stack already exists.** Do not copy the example over the real `demo.tfvars`, lose the state file, or apply an old saved plan. For the live demo, read the current setup with:
+The live stack is already built. Its private tfvars currently requests **one** worker. For the demo, this read-only check is enough to show that the AWS resources still match the code:
 
 ```bash
 terraform -chdir=terraform plan -var-file=envs/demo/demo.tfvars
 ```
 
-`No changes` means AWS and Terraform still match. Terraform's outputs include database/secret **addresses and ARNs**, not passwords. RDS generates its own master password and stores it in Secrets Manager.
+The expected result is `No changes`. Terraform outputs include names, addresses and secret ARNs, not password values. RDS generates its own master password in Secrets Manager.
 
-## Why the network has three kinds of subnet
+A worker count of zero stops the app but not the other AWS costs. A single NAT gateway and single-AZ RDS keep this short demo smaller, with less redundancy. The deployment user has temporary broad IAM permissions for setup and cleanup; the app role is more limited.
 
-- **Public subnets:** contain the ALB and a NAT gateway.
-- **Private app subnets:** contain EKS workers and Flask Pods. The workers have no public IP.
-- **Isolated database subnets:** contain RDS and have no route to the internet. RDS allows PostgreSQL traffic only from the worker network.
-
-There is one NAT gateway to spend fewer credits; it is also a single point of failure. The RDS database runs in one Availability Zone to keep the demo small. These choices are listed as limitations in the [security page](../docs/security-controls.md).
-
-## Saving credit and cleaning up
-
-The live private `demo.tfvars` uses `node_count = 1`; the example starts at two. Setting it to `0` and running a new Terraform plan/apply stops workers **but also stops the form**. EKS, RDS, NAT, ALB and other resources continue using credit. Before a demo, bring the count back to at least `1` and check that the app is healthy.
-
-After the agreed demo window, remove the Ingress and let the controller delete the ALB **before** using `terraform destroy`. Destroy removes the sample database without a final snapshot. Keep the state file safe until the teardown is complete. The [main guide](../README.md#credits-pause-and-cleanup) gives the commands.
-
-The workstation deployment user has temporary broad IAM access for this demo, although the app itself has a role limited to its own secret. Explain this openly; it is not a fully locked-down production deployment.
+After the agreed demo window, the Ingress/ALB must be removed before `terraform destroy`. The [main README](../README.md#credit-and-cleanup) has those commands. Destroy removes the sample database without a final snapshot, so the local state must be kept until cleanup is complete.

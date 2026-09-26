@@ -1,15 +1,13 @@
-# Evidence: proof from the live demo
+# Demo evidence
 
-This folder holds **redacted** records of what I checked in AWS and Kubernetes:
+This folder has two redacted security checks:
 
-| File | What it shows |
-| --- | --- |
-| `security-audit-redacted.txt` | First security check, before the worker count was reduced. It shows two requested workers. |
-| `security-audit-2026-09-26-redacted.txt` | Later security check, with one requested worker. |
+- `security-audit-redacted.txt` was taken before reducing the EKS workers from two to one.
+- `security-audit-2026-09-26-redacted.txt` was taken afterwards.
 
-These are my **manual checks**, not Security Hub findings or a CIS certificate. [The security page](../docs/security-controls.md) explains what passed and which limits remain.
+The checks show AWS and Kubernetes settings. They are not Security Hub findings. The [security notes](../docs/security-controls.md) explain what passed and what is still open.
 
-To take a fresh check from the main project folder:
+A fresh raw check can be collected from the project root:
 
 ```bash
 mkdir -p evidence/private
@@ -18,4 +16,4 @@ chmod 700 evidence/private
 chmod 600 evidence/private/security-audit.txt
 ```
 
-The `private/` folder is ignored by Git. Before sharing any copy, remove account numbers, ARNs, IP addresses, ALB addresses and personal details; check the result carefully. **Never commit the raw file, a password, a secret value, a real contact submission or Terraform state.** Only put a reviewed, redacted copy in this public folder.
+Git ignores `evidence/private/`. Raw output stays there. Before any evidence goes into this public repo, account numbers, ARNs, IP addresses, ALB addresses and personal details need to be removed and checked. No passwords, secret values, Terraform state or real contact messages belong in Git.

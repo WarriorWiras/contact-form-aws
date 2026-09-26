@@ -1,34 +1,28 @@
-# Live demo: what to run and what to say
+# Live demo notes
 
-All commands below are run in **Ubuntu WSL from `~/projects/contact-form-aws`**, with `AWS_PROFILE=contact-demo` and `AWS_DEFAULT_REGION=us-east-1`. Open the [main guide](../README.md#start-a-wsl-session-for-the-existing-deployment) if your AWS login has expired. The website currently uses HTTP: submit **fictional** details only.
+Commands are run from `~/projects/contact-form-aws` in Ubuntu WSL. The AWS profile is `contact-demo` in `us-east-1`. The [main README](../README.md#running-the-current-demo) covers login and the first checks.
 
-## Already tested before the meeting
+The stack was created on 25 September 2026 and checked again on 26 September. The latest check had one Ready worker, two available Flask Pods, Terraform `No changes`, and ALB `/health/ready` HTTP 200. Ansible had also been rerun with `changed=0` before the README changes.
 
-- [x] On 25 September 2026, Flask tests passed. Terraform created the AWS network, EKS and RDS; Ansible deployed the app. A form entry reached the database and `./scripts/verify.sh` showed it.
-- [x] Ansible was rerun with `changed=0` and `failed=0`. The Terraform plan showed `No changes`.
-- [x] I reduced EKS workers from two to **one** using Terraform. The old worker left, two Flask Pods remained ready and the ALB still returned HTTP 200.
-- [x] On 26 September, Free Plan was `ACTIVE`; the reported remaining credit was USD 133.83. A fresh Terraform plan showed `No changes`, one worker was Ready, the Deployment was 2/2, and ALB `/health/ready` returned HTTP 200. This is a dated snapshot, not a future credit estimate.
-- [x] The first [redacted audit](../evidence/security-audit-redacted.txt) shows two requested workers; the [new redacted audit](../evidence/security-audit-2026-09-26-redacted.txt) shows one. The new file passed basic checks for exposed account IDs, ARNs, ALB addresses and the operator IP.
+The live stack already exists. A no-change Terraform run will not create a second EKS cluster or RDS database. A new build would need to be planned separately, without deleting the working demo unexpectedly.
 
-## During the live demo
+## Ten things to show
 
-Use this order. Pause after each step to explain the result. **The stack already exists:** a no-change Terraform plan or apply will not recreate EKS and RDS. Arrange a fresh rebuild with the interviewer ahead of time if they require one; do not destroy the working demo to improvise.
+1. **Terraform on WSL.** Open `terraform/` and run `terraform -chdir=terraform plan -var-file=envs/demo/demo.tfvars`. It should say `No changes`. Terraform was applied from WSL to create the stack.
+2. **EKS.** Run `aws eks describe-cluster --name contact-demo --query 'cluster.status' --output text` and `kubectl get nodes -o wide`. The cluster is active and the worker has no public IP.
+3. **RDS.** Run `aws rds describe-db-instances --db-instance-identifier contact-demo-postgres --query 'DBInstances[0].{status:DBInstanceStatus,public:PubliclyAccessible,encrypted:StorageEncrypted}' --output table`. RDS should be available, private and encrypted.
+4. **Secrets Manager.** Run `aws secretsmanager describe-secret --secret-id contact-demo/app-db --query '{name:Name,arn:ARN}' --output json`. For the RDS master secret, use `aws secretsmanager describe-secret --secret-id "$(terraform -chdir=terraform output -raw db_master_secret_arn)" --query '{name:Name,arn:ARN}' --output json`. These show names and ARNs, **not password values**.
+5. **Ansible.** Run `ansible-playbook ansible/deploy.yml`. The first run after changing `app/README.md` may rebuild images. A second unchanged run should end with `changed=0` and `failed=0`.
+6. **ALB.** Run `kubectl -n contact-form get deployment,service,ingress` and `aws elbv2 describe-load-balancers --query 'LoadBalancers[].[DNSName,State.Code,Scheme]' --output table`. The Ingress points to the public ALB. The AWS controller made it from the Ingress.
+7. **Contact form.** Open the Ingress's `http://` address in a browser. Submit a fictional name, email and message. The site does not yet use HTTPS.
+8. **Saved row.** Run `./scripts/verify.sh`. It uses a separate read-only database user to show the new test entry in RDS.
+9. **Security.** Show the [security notes](security-controls.md) and the [26 September redacted audit](../evidence/security-audit-2026-09-26-redacted.txt). The database is private and encrypted, workers are private, EKS logs are enabled and Flask is non-root. Security Hub was unavailable on the Free Plan; HTTP and other limits are documented rather than hidden.
+10. **Cleanup plan.** Check the current Free Plan credit. After the agreed demo window, remove the Ingress/ALB, then use Terraform destroy as shown in the main README.
 
-Before the meeting, rerun Ansible once after committing the rewritten `app/README.md`. The current image tag includes that file, so this first run may rebuild images and run another database setup Job. Check readiness and rerun Ansible a second time to show `changed=0`.
+## Progress
 
-1. **Terraform from the laptop:** show `terraform/` and run `terraform -chdir=terraform plan -var-file=envs/demo/demo.tfvars`. Say: “Terraform made the AWS base, and `No changes` means it still matches my code.” The original `terraform apply` created it on 25 September.
-2. **EKS cluster and workers:** run `aws eks describe-cluster --name contact-demo --query 'cluster.status' --output text` and `kubectl get nodes -o wide`. Say: “The cluster is active. The worker has no public IP.”
-3. **RDS PostgreSQL:** run `aws rds describe-db-instances --db-instance-identifier contact-demo-postgres --query 'DBInstances[0].{status:DBInstanceStatus,public:PubliclyAccessible,encrypted:StorageEncrypted}' --output table`. Show `available`, `False` for public and `True` for encrypted.
-4. **Database secrets:** run `aws secretsmanager describe-secret --secret-id contact-demo/app-db --query '{name:Name,arn:ARN}' --output json`. For the master secret, run `aws secretsmanager describe-secret --secret-id "$(terraform -chdir=terraform output -raw db_master_secret_arn)" --query '{name:Name,arn:ARN}' --output json`. Say: “RDS made the master password; the app uses another restricted password.” **Never run `get-secret-value` on screen.**
-5. **Ansible deployment:** run `ansible-playbook ansible/deploy.yml` and `kubectl -n contact-form get deployment,service,ingress,pods`. Say: “This publishes the app and can be repeated. The Service is internal, while the Ingress tells AWS to make the ALB.” A finished `db-bootstrap` Job is normal.
-6. **ALB:** show the Ingress `ADDRESS` or run `aws elbv2 describe-load-balancers --query 'LoadBalancers[].[DNSName,State.Code,Scheme]' --output table`. Say: “The ALB was made automatically by the AWS Load Balancer Controller from the Ingress.” Terraform supplies its network and IAM settings.
-7. **Open the form:** copy the Ingress's `http://` address into a browser. Show the three fields and submit **made-up** name, email and message.
-8. **Show it in RDS:** run `./scripts/verify.sh`. It briefly creates a read-only Job in EKS and prints recent rows. Find the fictional entry you just submitted.
-9. **Security checks:** open [security controls](security-controls.md) and the [redacted audit](../evidence/security-audit-2026-09-26-redacted.txt). Show private/encrypted RDS, limited security-group access, EKS logs, MFA, non-root Pods and resource limits. Explain the documented HTTP/EKS API/deployer/rotation limits and the Free Plan's Security Hub `SubscriptionRequiredException`. Do **not** say AWS issued a Security Hub compliance score.
-10. **Finish:** check the Free Plan balance. Tell the reviewer that after the agreed demo window you will remove the Ingress/ALB and destroy the AWS stack, following the main README.
-
-## Still to do
-
-- [ ] Conduct the interviewer's live end-to-end demonstration.
-- [ ] Send the Git repository and documents by the assignment deadline.
-- [ ] After the agreed availability window, delete the ALB through its Ingress, run Terraform destroy and check for leftover billable AWS resources.
+- [x] Initial build, app test, database row check and Ansible repeat on 25 September.
+- [x] Scale-down from two workers to one, followed by ALB health HTTP 200.
+- [x] Fresh Terraform plan and redacted one-worker security check on 26 September. Credit was reported as USD 133.83 that day; it needs a fresh check before the demo.
+- [ ] Interviewer's live demo and submission email.
+- [ ] AWS cleanup after the agreed window.

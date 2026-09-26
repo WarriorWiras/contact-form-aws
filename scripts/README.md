@@ -1,18 +1,12 @@
-# Small demo scripts
+# Demo scripts
 
-Run these from the **main project folder** in Ubuntu WSL after signing into the `contact-demo` AWS profile. They use your local Terraform state and access to the existing EKS cluster.
+These scripts run from the project root in Ubuntu WSL. They need the `contact-demo` AWS profile, the local Terraform state and access to EKS.
 
-## Show that a form entry reached RDS
+`./scripts/verify.sh` starts a short-lived Job inside EKS. It uses a database user with read-only access and prints up to five recent form entries. The Job is removed afterwards. The website uses HTTP, so form entries for the demo must be fictional.
 
-First submit a **made-up** name, email and message in the ALB website. Then run:
+`./scripts/security-audit.sh` reads AWS and Kubernetes settings such as EKS logging, RDS encryption, network rules, MFA count, ECR scanning and Pod limits. It does not fetch passwords or enable Security Hub.
 
-```bash
-./scripts/verify.sh
-```
-
-The script briefly creates a Job **inside EKS**, uses a database user with **read-only** access, prints up to five recent rows and removes that Job. It cannot change or delete stored messages. Do not use real personal data in the HTTP demo or share rows containing private details.
-
-## Check security settings
+Raw audit output should stay in the ignored private folder:
 
 ```bash
 mkdir -p evidence/private
@@ -20,6 +14,4 @@ mkdir -p evidence/private
 chmod 600 evidence/private/security-audit.txt
 ```
 
-This script reads settings such as the EKS API access, logging, private/encrypted RDS, security groups, secret **names** (not values), ECR image checks, MFA count and Flask Pod security. It does not turn Security Hub on or fetch passwords. The result is a **manual audit**, so read it and remove identifiers before putting a copy in Git. The raw file stays in the ignored `evidence/private/` folder.
-
-For the command to remove the AWS stack **after** the demo, see the [main guide](../README.md#credits-pause-and-cleanup).
+The two files already in `evidence/` were redacted before they were committed. A fresh output needs the same review before sharing. Cleanup commands are in the [main README](../README.md#credit-and-cleanup).
